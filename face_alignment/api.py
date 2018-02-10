@@ -7,6 +7,8 @@ import torch.nn as nn
 from torch.autograd import Variable
 from enum import Enum
 from skimage import io
+import numpy as np
+
 try:
     import urllib.request as request_file
 except BaseException:
@@ -147,72 +149,98 @@ class FaceAlignment:
         Returns:
             Returns a list of detected faces
         """
+
+        # large? resize
+        long_side = max(image.shape[0], image.shape[1])
+        if long_side > 1024:
+            scale = 1024/long_side
+            resized = cv2.resize(image, dsize=(0, 0), fx=scale, fy=scale, interpolation=cv2.INTER_LINEAR)
+            detects = self.face_detector(resized, 1)
+
+            for d in detects:
+                r = d.rect
+                d.rect = dlib.rectangle(int(r.left()/scale), int(r.top()/scale),
+                                        int(r.right()/scale), int(r.bottom()/scale))
+                return [d]
+            return []
+
         return self.face_detector(image, 1)
 
-    def get_landmarks(self, input_image, all_faces=False):
-        if isinstance(input_image, str):
-            try:
-                image = io.imread(input_image)
-            except IOError:
-                print("error opening file :: ", input_image)
-                return None
+    def process_batch(self, input_images):
+        assert type(input_images) == list
+        batch = []
+        centers = []
+        scales = []
+
+        for i_img, input_image in enumerate(input_images):
+            if isinstance(input_image, str):
+                try:
+                    image = io.imread(input_image)
+                except IOError:
+                    print("error opening file :: ", input_image)
+                    return None
+                input_images[i_img] = image
+            else:
+                image = input_image
+
+            detected_faces = self.detect_faces(image)
+            if len(detected_faces) > 0:
+                landmarks = []
+                for i, d in enumerate(detected_faces):
+                    if i > 1:
+                        break
+                    if self.enable_cuda or self.use_cnn_face_detector:
+                        d = d.rect
+
+                    center = torch.FloatTensor(
+                        [d.right() - (d.right() - d.left()) / 2.0, d.bottom() -
+                         (d.bottom() - d.top()) / 2.0])
+                    center[1] = center[1] - (d.bottom() - d.top()) * 0.12
+                    scale = (d.right() - d.left() + d.bottom() - d.top()) / 195.0
+
+                    inp = crop(image, center, scale)
+                    batch.append(inp)
+                    centers.append(center)
+                    scales.append(scale)
+
+                    del inp, center, scale
+
+        batch = np.stack(batch, axis=0)
+        batch = np.transpose(batch, axes=(0, 3, 1, 2)).astype(np.float32) / 255.0
+        batch = torch.from_numpy(batch).contiguous()
+        batch_size = batch.size(0)
+        scales = torch.FloatTensor(scales)
+
+        if self.enable_cuda:
+            batch = batch.cuda(async=True)
+
+        batch_out = self.face_alignemnt_net(Variable(batch, volatile=True))[-1].data.cpu()
+        if self.flip_input:
+            batch_out += flip(self.face_alignemnt_net(Variable(flip(batch), volatile=True))
+                              [-1].data.cpu(), is_label=True)
+
+        pts, pts_img = get_preds_fromhm(batch_out, centers, scales)
+        pts, pts_img = pts.view(batch_size, 68, 2) * 4, pts_img.view(batch_size, 68, 2)
+
+        if self.landmarks_type == LandmarksType._3D:
+            heatmaps = np.zeros((batch_size, 68, 256, 256))
+            for b in range(batch_size):
+                for i in range(68):
+                    if pts[b, i, 0] > 0:
+                        heatmaps[b, i] = draw_gaussian(heatmaps[b, i], pts[b, i], 2)
+            heatmaps = torch.from_numpy(heatmaps).view(batch_size, 68, 256, 256).float()
+            heatmaps = heatmaps.cuda(async=True)
+
+            depth_pred = self.depth_prediciton_net(
+                Variable(torch.cat((batch, heatmaps), 1), volatile=True)).data.cpu().view(batch_size, 68, 1)
+
+            # scales : [B], depth_pred : [B, 68, 1]
+            pts_img = torch.cat((pts_img, depth_pred * (1.0 / (256.0 / (200.0 * scales.view(-1, 1, 1))))), 2)
         else:
-            image = input_image
-
-        detected_faces = self.detect_faces(image)
-        if len(detected_faces) > 0:
-            landmarks = []
-            for i, d in enumerate(detected_faces):
-                if i > 1 and not all_faces:
-                    break
-                if self.enable_cuda or self.use_cnn_face_detector:
-                    d = d.rect
-
-                center = torch.FloatTensor(
-                    [d.right() - (d.right() - d.left()) / 2.0, d.bottom() -
-                     (d.bottom() - d.top()) / 2.0])
-                center[1] = center[1] - (d.bottom() - d.top()) * 0.12
-                scale = (d.right() - d.left() + d.bottom() - d.top()) / 195.0
-
-                inp = crop(image, center, scale)
-                inp = torch.from_numpy(inp.transpose(
-                    (2, 0, 1))).float().div(255.0).unsqueeze_(0)
-
-                if self.enable_cuda:
-                    inp = inp.cuda()
-
-                out = self.face_alignemnt_net(
-                    Variable(inp, volatile=True))[-1].data.cpu()
-                if self.flip_input:
-                    out += flip(self.face_alignemnt_net(Variable(flip(inp),
-                                                                 volatile=True))[-1].data.cpu(), is_label=True)
-
-                pts, pts_img = get_preds_fromhm(out, center, scale)
-                pts, pts_img = pts.view(68, 2) * 4, pts_img.view(68, 2)
-
-                if self.landmarks_type == LandmarksType._3D:
-                    heatmaps = np.zeros((68, 256, 256))
-                    for i in range(68):
-                        if pts[i, 0] > 0:
-                            heatmaps[i] = draw_gaussian(heatmaps[i], pts[i], 2)
-                    heatmaps = torch.from_numpy(
-                        heatmaps).view(1, 68, 256, 256).float()
-                    if self.enable_cuda:
-                        heatmaps = heatmaps.cuda()
-                    depth_pred = self.depth_prediciton_net(
-                        Variable(
-                            torch.cat(
-                                (inp, heatmaps), 1), volatile=True)).data.cpu().view(
-                        68, 1)
-                    pts_img = torch.cat(
-                        (pts_img, depth_pred * (1.0 / (256.0 / (200.0 * scale)))), 1)
-
-                landmarks.append(pts_img.numpy())
-        else:
-            print("Warning: No faces were detected.")
+            print("Error: No faces were detecte: " + input_image)
             return None
 
-        return landmarks
+        return pts_img.numpy()
 
     def process_folder(self, path, all_faces=False):
         types = ('*.jpg', '*.png')
@@ -222,8 +250,7 @@ class FaceAlignment:
 
         predictions = []
         for image_name in images_list:
-            predictions.append(
-                image_name, self.get_landmarks(image_name, all_faces))
+            predictions.append(image_name, self.get_landmarks(image_name, all_faces))
 
         return predictions
 

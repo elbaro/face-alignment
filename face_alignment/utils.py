@@ -5,6 +5,7 @@ import time
 import torch
 import math
 import numpy as np
+import torch
 import cv2
 
 
@@ -104,6 +105,11 @@ def crop(image, center, scale, resolution=256.0):
     return newImg
 
 
+# input: 1x68x64x64
+# center : 2
+# scale : scalar
+# ret1 : 1x68x2 (coord in face img)
+# ret2 : 1x68x2 (coord in orig img)
 def get_preds_fromhm(hm, center=None, scale=None):
     max, idx = torch.max(
         hm.view(hm.size(0), hm.size(1), hm.size(2) * hm.size(3)), 2)
@@ -126,10 +132,17 @@ def get_preds_fromhm(hm, center=None, scale=None):
 
     preds_orig = torch.zeros(preds.size())
     if center is not None and scale is not None:
-        for i in range(hm.size(0)):
-            for j in range(hm.size(1)):
-                preds_orig[i, j] = transform(
-                    preds[i, j], center, scale, hm.size(2), True)
+        # batch mode
+        if torch.is_tensor(scale) or type(scale) == list:
+            for i in range(hm.size(0)):  # batch index
+                for j in range(hm.size(1)):  # 68
+                    preds_orig[i, j] = transform(
+                        preds[i, j], center[i], scale[i], hm.size(2), True)
+        else:
+            for i in range(hm.size(0)):
+                for j in range(hm.size(1)):
+                    preds_orig[i, j] = transform(
+                        preds[i, j], center, scale, hm.size(2), True)
 
     return preds, preds_orig
 
