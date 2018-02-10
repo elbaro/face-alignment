@@ -13,7 +13,7 @@ inputs = [
     '../test/assets/ex2.jpg',
     '../test/assets/ex3.jpg'
 ]
-_preds = fa.process_batch(inputs)
+found, _preds = fa.process_batch(inputs)
 
 for img, preds in zip(inputs, _preds):
     # TODO: Make this nice

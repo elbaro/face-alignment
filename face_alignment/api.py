@@ -171,6 +171,7 @@ class FaceAlignment:
         batch = []
         centers = []
         scales = []
+        face_found = []
 
         for i_img, input_image in enumerate(input_images):
             if isinstance(input_image, str):
@@ -185,25 +186,36 @@ class FaceAlignment:
 
             detected_faces = self.detect_faces(image)
             if len(detected_faces) > 0:
-                landmarks = []
+                # find largest rect
+                mx = 0
+                r = None
                 for i, d in enumerate(detected_faces):
-                    if i > 1:
-                        break
-                    if self.enable_cuda or self.use_cnn_face_detector:
-                        d = d.rect
+                    area = d.rect.area()
+                    if area > mx:
+                        mx = area
+                        r = d.rect
 
-                    center = torch.FloatTensor(
-                        [d.right() - (d.right() - d.left()) / 2.0, d.bottom() -
-                         (d.bottom() - d.top()) / 2.0])
-                    center[1] = center[1] - (d.bottom() - d.top()) * 0.12
-                    scale = (d.right() - d.left() + d.bottom() - d.top()) / 195.0
+                landmarks = []
 
-                    inp = crop(image, center, scale)
-                    batch.append(inp)
-                    centers.append(center)
-                    scales.append(scale)
+                center = torch.FloatTensor(
+                    [r.right() - (r.right() - r.left()) / 2.0, r.bottom() -
+                        (r.bottom() - r.top()) / 2.0])
+                center[1] = center[1] - (r.bottom() - r.top()) * 0.12
+                scale = (r.right() - r.left() + r.bottom() - r.top()) / 195.0
 
-                    del inp, center, scale
+                inp = crop(image, center, scale)
+                batch.append(inp)
+                centers.append(center)
+                scales.append(scale)
+
+                del inp, center, scale
+
+                face_found.append(True)
+            else:
+                face_found.append(False)
+
+        if len(batch) == 0:  # 0 face
+            return face_found, []
 
         batch = np.stack(batch, axis=0)
         batch = np.transpose(batch, axes=(0, 3, 1, 2)).astype(np.float32) / 255.0
@@ -222,25 +234,21 @@ class FaceAlignment:
         pts, pts_img = get_preds_fromhm(batch_out, centers, scales)
         pts, pts_img = pts.view(batch_size, 68, 2) * 4, pts_img.view(batch_size, 68, 2)
 
-        if self.landmarks_type == LandmarksType._3D:
-            heatmaps = np.zeros((batch_size, 68, 256, 256))
-            for b in range(batch_size):
-                for i in range(68):
-                    if pts[b, i, 0] > 0:
-                        heatmaps[b, i] = draw_gaussian(heatmaps[b, i], pts[b, i], 2)
-            heatmaps = torch.from_numpy(heatmaps).view(batch_size, 68, 256, 256).float()
-            heatmaps = heatmaps.cuda(async=True)
+        # 2D -> 3D
+        heatmaps = np.zeros((batch_size, 68, 256, 256))
+        for b in range(batch_size):
+            for i in range(68):
+                if pts[b, i, 0] > 0:
+                    heatmaps[b, i] = draw_gaussian(heatmaps[b, i], pts[b, i], 2)
+        heatmaps = torch.from_numpy(heatmaps).view(batch_size, 68, 256, 256).float()
+        heatmaps = heatmaps.cuda(async=True)
 
-            depth_pred = self.depth_prediciton_net(
-                Variable(torch.cat((batch, heatmaps), 1), volatile=True)).data.cpu().view(batch_size, 68, 1)
+        depth_pred = self.depth_prediciton_net(
+            Variable(torch.cat((batch, heatmaps), 1), volatile=True)).data.cpu().view(batch_size, 68, 1)
 
-            # scales : [B], depth_pred : [B, 68, 1]
-            pts_img = torch.cat((pts_img, depth_pred * (1.0 / (256.0 / (200.0 * scales.view(-1, 1, 1))))), 2)
-        else:
-            print("Error: No faces were detecte: " + input_image)
-            return None
-
-        return pts_img.numpy()
+        # scales : [B], depth_pred : [B, 68, 1]
+        pts_img = torch.cat((pts_img, depth_pred * (1.0 / (256.0 / (200.0 * scales.view(-1, 1, 1))))), 2)
+        return face_found, pts_img.numpy()
 
     def process_folder(self, path, all_faces=False):
         types = ('*.jpg', '*.png')
