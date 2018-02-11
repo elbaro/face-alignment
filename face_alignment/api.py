@@ -177,6 +177,8 @@ class FaceAlignment:
             if isinstance(input_image, str):
                 try:
                     image = io.imread(input_image)
+                    if len(image.shape) == 2:
+                        image = np.expand_dims(image, axis=2).repeat(3, axis=2)  # [H,W] -> [H,W,3]
                 except IOError:
                     print("error opening file :: ", input_image)
                     return None
