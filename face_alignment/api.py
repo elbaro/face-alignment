@@ -186,9 +186,11 @@ class FaceAlignment:
             else:
                 image = input_image
 
+            found = False
             if y_x_height_width is None:
                 detected_faces = self.detect_faces(image)
                 if len(detected_faces) > 0:
+                    found = True
                     # find largest rect
                     mx = 0
                     r = None
@@ -197,31 +199,27 @@ class FaceAlignment:
                         if area > mx:
                             mx = area
                             r = d.rect
-
                     center = torch.FloatTensor(
                         [r.right() - (r.right() - r.left()) / 2.0, r.bottom() -
                             (r.bottom() - r.top()) / 2.0])
                     center[1] = center[1] - (r.bottom() - r.top()) * 0.12
                     scale = (r.right() - r.left() + r.bottom() - r.top()) / 195.0
-                else:
-                    top, left, height, width = y_x_height_width[i_img]
-                    bottom = top + height
-                    right = left + width
-                    center = torch.FloatTensor(
-                        [right - width / 2.0, bottom - height / 2.0])
-                    center[1] = center[1] - (bottom - top) * 0.12
-                    scale = (right - left + bottom - top) / 195.0
+            else:
+                found = True
+                top, left, height, width = y_x_height_width[i_img]
+                bottom = top + height
+                right = left + width
+                center = torch.FloatTensor(
+                    [right - width / 2.0, bottom - height / 2.0])
+                center[1] = center[1] - (bottom - top) * 0.12
+                scale = (right - left + bottom - top) / 195.0
 
+            face_found.append(found)
+            if found:
                 inp = crop(image, center, scale)
                 batch.append(inp)
                 centers.append(center)
                 scales.append(scale)
-
-                del inp, center, scale
-
-                face_found.append(True)
-            else:
-                face_found.append(False)
 
         if len(batch) == 0:  # 0 face
             return face_found, []

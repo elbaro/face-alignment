@@ -8,12 +8,13 @@ from skimage import io
 fa = face_alignment.FaceAlignment(face_alignment.LandmarksType._3D, enable_cuda=True, flip_input=False)
 
 inputs = [
-    '../test/assets/aflw-test.jpg',
-    '../test/assets/ex1.jpg',
-    '../test/assets/ex2.jpg',
-    '../test/assets/ex3.jpg'
+    # '../test/assets/aflw-test.jpg',
+    # '../test/assets/ex1.jpg',
+    # '../test/assets/ex2.jpg',
+    # '../test/assets/ex3.jpg'
+    '../test/assets/img.png'
 ]
-found, _preds = fa.process_batch(inputs)
+found, _preds = fa.process_batch(inputs, y_x_height_width=[[133.55, 114.347, 265.25, 228.44]])
 
 for img, preds in zip(inputs, _preds):
     # TODO: Make this nice
