@@ -166,7 +166,7 @@ class FaceAlignment:
 
         return self.face_detector(image, 1)
 
-    def process_batch(self, input_images):
+    def process_batch(self, input_images, y_x_height_width=None):
         assert type(input_images) == list
         batch = []
         centers = []
@@ -186,24 +186,31 @@ class FaceAlignment:
             else:
                 image = input_image
 
-            detected_faces = self.detect_faces(image)
-            if len(detected_faces) > 0:
-                # find largest rect
-                mx = 0
-                r = None
-                for i, d in enumerate(detected_faces):
-                    area = d.rect.area()
-                    if area > mx:
-                        mx = area
-                        r = d.rect
+            if y_x_height_width is None:
+                detected_faces = self.detect_faces(image)
+                if len(detected_faces) > 0:
+                    # find largest rect
+                    mx = 0
+                    r = None
+                    for i, d in enumerate(detected_faces):
+                        area = d.rect.area()
+                        if area > mx:
+                            mx = area
+                            r = d.rect
 
-                landmarks = []
-
-                center = torch.FloatTensor(
-                    [r.right() - (r.right() - r.left()) / 2.0, r.bottom() -
-                        (r.bottom() - r.top()) / 2.0])
-                center[1] = center[1] - (r.bottom() - r.top()) * 0.12
-                scale = (r.right() - r.left() + r.bottom() - r.top()) / 195.0
+                    center = torch.FloatTensor(
+                        [r.right() - (r.right() - r.left()) / 2.0, r.bottom() -
+                            (r.bottom() - r.top()) / 2.0])
+                    center[1] = center[1] - (r.bottom() - r.top()) * 0.12
+                    scale = (r.right() - r.left() + r.bottom() - r.top()) / 195.0
+                else:
+                    top, left, height, width = y_x_height_width[i_img]
+                    bottom = top + height
+                    right = left + width
+                    center = torch.FloatTensor(
+                        [right - width / 2.0, bottom - height / 2.0])
+                    center[1] = center[1] - (bottom - top) * 0.12
+                    scale = (right - left + bottom - top) / 195.0
 
                 inp = crop(image, center, scale)
                 batch.append(inp)
