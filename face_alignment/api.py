@@ -235,7 +235,10 @@ class FaceAlignment:
         if self.enable_cuda:
             batch = batch.cuda(async=True)
 
+        print('inp sum', batch.sum())
         batch_out = self.face_alignemnt_net(Variable(batch, volatile=True))[-1].data.cpu()
+        print('out sum',batch_out.sum())
+
         if self.flip_input:
             batch_out += flip(self.face_alignemnt_net(Variable(flip(batch), volatile=True))
                               [-1].data.cpu(), is_label=True)
@@ -259,25 +262,3 @@ class FaceAlignment:
         pts_img = torch.cat((pts_img, depth_pred * (1.0 / (256.0 / (200.0 * scales.view(-1, 1, 1))))), 2)
         return face_found, pts_img.numpy()
 
-    def process_folder(self, path, all_faces=False):
-        types = ('*.jpg', '*.png')
-        images_list = []
-        for files in types:
-            images_list.extend(glob.glob(os.path.join(path, files)))
-
-        predictions = []
-        for image_name in images_list:
-            predictions.append(image_name, self.get_landmarks(image_name, all_faces))
-
-        return predictions
-
-    def remove_models(self):
-        base_path = os.path.join(appdata_dir('face_alignment'), "data")
-        for data_model in os.listdir(base_path):
-            file_path = os.path.join(base_path, data_model)
-            try:
-                if os.path.isfile(file_path):
-                    print('Removing ' + data_model + ' ...')
-                    os.unlink(file_path)
-            except Exception as e:
-                print(e)

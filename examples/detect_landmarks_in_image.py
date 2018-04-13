@@ -12,9 +12,9 @@ inputs = [
     # '../test/assets/ex1.jpg',
     # '../test/assets/ex2.jpg',
     # '../test/assets/ex3.jpg'
-    '../test/assets/img.png'
+    '/home/emppu/Pictures/face.png'
 ]
-found, _preds = fa.process_batch(inputs, y_x_height_width=[[133.55, 114.347, 265.25, 228.44]])
+found, _preds = fa.process_batch(inputs, y_x_height_width=[[214.51, 144.209, 428.884, 287.85083]])
 
 for img, preds in zip(inputs, _preds):
     # TODO: Make this nice
